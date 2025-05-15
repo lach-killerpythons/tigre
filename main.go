@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	KDB "tigre/kdb"
 
 	"context"
 
@@ -17,8 +18,9 @@ import (
 )
 
 var (
-	keyDB *redis.Client
-	ctx   = context.Background()
+	keyDB    *redis.Client
+	ctx      = context.Background()
+	lastList KDB_List // redundant list copy
 )
 
 const (
@@ -26,18 +28,13 @@ const (
 	gods_key  = "gods"
 )
 
-func ConnectDB() *redis.Client {
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379", // host:port of the redis server
-		Password: "",               // no password set
-		DB:       0,                // use default DB
-	})
-	//panic if no db connected
-	_, err := rdb.Ping(ctx).Result()
-	if err != nil {
-		panic(err)
-	}
-	return rdb
+type TestData struct {
+	Val string `json:"val"` // needs to be in caps to be exported
+}
+
+type KDB_List struct {
+	Inputs TestData
+	List   []string
 }
 
 // convert a textfile into a redis list
@@ -114,10 +111,6 @@ func jsonFruits(w http.ResponseWriter, r *http.Request) {
 	w.Write(input)
 }
 
-type TestData struct {
-	Val string `json:"val"` // needs to be in caps to be exported
-}
-
 func KDB_del_str(key string, targetList string, kdb *redis.Client) (string, int) {
 	//kdb.LRem(ctx, targetList, 0, key)
 	result, err := kdb.Do(ctx, "LREM", targetList, 0, key).Result()
@@ -132,27 +125,37 @@ func KDB_del_str(key string, targetList string, kdb *redis.Client) (string, int)
 }
 
 func delGod(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
+	w.Header().Set("Content-Type", "application/json")
+	//origin := req.Header.Get("Origin")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
 
-	defer r.Body.Close()
+	if r.Method == "DELETE" {
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Cannot read body", http.StatusBadRequest)
-		return
-	}
-	var data TestData
+		defer r.Body.Close()
 
-	if body != nil {
-		//err := json.NewDecoder(body).Decode(&data)
-		err := json.Unmarshal(body, &data)
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			fmt.Println(err)
+			http.Error(w, "Cannot read body", http.StatusBadRequest)
+			return
 		}
+		var data TestData
+
+		if body != nil {
+			//err := json.NewDecoder(body).Decode(&data)
+			err := json.Unmarshal(body, &data)
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+		//key, n_times := KDB_del_str(data.Val, "gods", keyDB)
+		_, n_times := KDB_del_str(data.Val, "gods", keyDB)
+		outputStr := fmt.Sprint(n_times)
+		w.Write([]byte(outputStr))
+
 	}
-	key, n_times := KDB_del_str(data.Val, "gods", keyDB)
-	outputStr := fmt.Sprintf(key, "N removed:", n_times)
-	w.Write([]byte(outputStr))
 }
 
 func postGod(w http.ResponseWriter, r *http.Request) {
@@ -188,27 +191,140 @@ func postGod(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func testPost(w http.ResponseWriter, r *http.Request) {
+func testGetList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 	//params := mux.Vars(r)
-	pp, _ := url.ParseQuery(r.URL.RawQuery)
 
-	var key string
-	var val string
+	u, err := url.Parse(r.URL.String())
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error parsing URL: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// 2. Get the Query parameters
+	query := u.Query()
+
+	// 3. Access individual parameters
+	val := query.Get("val")
+	fmt.Println(val)
+
+	w.Write([]byte(val))
+
+	// pp, _ := url.ParseQuery(r.URL.RawQuery)
+
+	// var key string
+	// var val string
+	// var data TestData
+
+	// if r.Body != nil {
+	// 	//fmt.Println("body:", r.Body)
+	// 	ss := json.NewDecoder(r.Body).Decode(&data)
+	// 	fmt.Println("Testdata:", data.Val, ss)
+	// }
+
+	// for k := range pp {
+	// 	key = k
+	// 	val = pp[k][0]
+	// }
+	// fmt.Println(key, val)
+	// w.Write([]byte(key + ":" + val))
+}
+
+// this is the correct way to do it with the URL and GET request (not the body)
+func jsonWildtype2(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+	//array holders
+	var strArr []string
+	var byteArr []byte
+	var listName string
+
+	// REFACTOR the KDB_list struct
+
+	// test data holds the parsed JSON body for {"val":"listname"}
 	var data TestData
+	// KDB_list is nested
+	var listObj KDB_List
 
-	if r.Body != nil {
-		//fmt.Println("body:", r.Body)
-		ss := json.NewDecoder(r.Body).Decode(&data)
-		fmt.Println("Testdata:", data.Val, ss)
+	u, err := url.Parse(r.URL.String())
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error parsing URL: %v", err), http.StatusBadRequest)
+		return
 	}
 
-	for k := range pp {
-		key = k
-		val = pp[k][0]
+	// 2. Get the Query parameters
+	query := u.Query()
+
+	// 3. Access individual parameters
+	val := query.Get("list")
+
+	if val != "" {
+
+		data.Val = val // TypeData
+		listObj.Inputs = data
+		listName = listObj.Inputs.Val
+
+		strArr, byteArr = KDB_list2JSON_alpha(keyDB, listName)
+		listObj.List = strArr
 	}
-	fmt.Println(key, val)
-	w.Write([]byte(key + ":" + val))
+	//save the last list requested
+	if len(strArr) == 0 {
+		outputStr := fmt.Sprint("❌ List not found: ", listName)
+		w.Write([]byte(outputStr))
+	} else {
+		lastList = listObj
+		w.Write(byteArr)
+	}
+
+}
+
+func jsonWildtype(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+	defer r.Body.Close()
+	//array holders
+	var strArr []string
+	var byteArr []byte
+	var listName string
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Cannot read body", http.StatusBadRequest)
+		return
+	}
+	// test data holds the parsed JSON body for {"val":"listname"}
+	var data TestData
+	// KDB_list is nested
+	var listObj KDB_List
+	fmt.Println("request body:", string(body))
+
+	if body != nil {
+		err := json.Unmarshal(body, &data)
+		if err != nil {
+			fmt.Println(err)
+		}
+		listObj.Inputs = data
+		listName = listObj.Inputs.Val
+		strArr, byteArr = KDB_list2JSON_alpha(keyDB, listObj.Inputs.Val)
+		listObj.List = strArr
+	}
+	//save the last list requested
+	if len(strArr) == 0 {
+		outputStr := fmt.Sprint("❌ List not found: ", listName)
+		w.Write([]byte(outputStr))
+	} else {
+		lastList = listObj
+		w.Write(byteArr)
+	}
+
 }
 
 // get the gods list
@@ -240,6 +356,24 @@ func KDB_list2JSON(rdb *redis.Client, listKey string) []byte {
 	return jsonData
 }
 
+func KDB_list2JSON_alpha(rdb *redis.Client, listKey string) ([]string, []byte) {
+	var output []byte
+	var strArr []string
+	values, err := rdb.LRange(ctx, listKey, 0, -1).Result()
+	if err != nil {
+		fmt.Printf("Failed to read Redis list: %v \n", err)
+		return strArr, output
+	}
+
+	// Convert to JSON
+	jsonData, err := json.MarshalIndent(values, "", "  ")
+	if err != nil {
+		fmt.Printf("Failed to parse JSON: %v \n", err)
+		return strArr, output
+	}
+	return values, jsonData
+}
+
 // simple post request --> /gods {"name":"Pazuzu"}
 // LPUSH gods "Pazuzu"
 // del
@@ -247,7 +381,7 @@ func KDB_list2JSON(rdb *redis.Client, listKey string) []byte {
 func main() {
 	fmt.Println("hellos")
 
-	keyDB = ConnectDB()
+	keyDB = KDB.ConnectDB()
 
 	// err := keyDB.LPush(ctx, "gods", "shebang").Err()
 	// fmt.Println(err)
@@ -256,8 +390,10 @@ func main() {
 
 	r := mux.NewRouter()
 	r.HandleFunc("/", helloResp).Methods("GET")
+	r.HandleFunc("/t", testGetList).Methods("GET")
 	r.HandleFunc("/jFruit", jsonFruits).Methods("GET")
 	r.HandleFunc("/jGods", jsonGods).Methods("GET")
+	r.HandleFunc("/anylist", jsonWildtype2).Methods("GET", "OPTIONS")
 	r.HandleFunc("/new_god", postGod).Methods("POST", "OPTIONS")
 	r.HandleFunc("/del", delGod).Methods("DELETE", "OPTIONS")
 	srv := &http.Server{
