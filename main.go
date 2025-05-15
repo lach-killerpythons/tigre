@@ -1,14 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/url"
-	"os"
 	KDB "tigre/kdb"
 
 	"context"
@@ -37,91 +34,14 @@ type KDB_List struct {
 	List   []string
 }
 
-// convert a textfile into a redis list
-func KDB_File2List(rdb *redis.Client, keyname string) {
-	targetFile := "fruity.txt"
-	file, err := os.Open(targetFile)
-	if err != nil {
-		fmt.Printf("Error opening file: %v\n", err)
-		return
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		rdb.LPush(ctx, keyname, line)
-
-		fmt.Println("added to '", keyname, "' ~", line)
-	}
-}
-
-// get a random list item
-func KDB_rand_ListItem(rdb *redis.Client, keyname string) string {
-	listLen, err := rdb.LLen(ctx, keyname).Result() //
-	if err != nil {
-		return err.Error()
-	}
-	random_i := rand.Intn(int(listLen)) // generate random index in range
-	result, err := rdb.Do(ctx, "LRANGE", keyname, random_i, random_i).Result()
-	if err != nil {
-		return err.Error()
-	}
-	getItem := result.([]interface{})[0].(string)
-	return getItem
-}
-
-func KDB_add2list(rdb *redis.Client, keyname string, val string) string { // 1 is success
-	//result, err := rdb.Do("lpush", keyname, val).Result()
-
-	//test_db := ConnectDB()
-
-	//result, err := test_db.LPush(keyname, val).Result()
-	err := keyDB.LPush(ctx, keyname, val).Err()
-	if err != nil {
-		fmt.Println("something failed", err)
-		return "0"
-	}
-	fmt.Println(`"`, val, `"`, "-added to list-")
-	return "1"
-}
-
-func fruit_salad(rdb *redis.Client, n_fruits int) []string {
-	var fruits []string
-	for i := 0; i < n_fruits; i++ {
-		next_fruit := KDB_rand_ListItem(rdb, "fruits")
-		fruits = append(fruits, next_fruit)
-	}
-	ss := ""
-	for _, s := range fruits {
-		ss += s + ", "
-	}
-	fmt.Println("today i made a salad containing: ", ss)
-	return fruits
-}
-
 func helloResp(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("welcome 🐯"))
 }
 
 // get the fruits list
 func jsonFruits(w http.ResponseWriter, r *http.Request) {
-	input := KDB_list2JSON(keyDB, fruit_key)
+	input := KDB.List2JSON(keyDB, fruit_key)
 	w.Write(input)
-}
-
-func KDB_del_str(key string, targetList string, kdb *redis.Client) (string, int) {
-	//kdb.LRem(ctx, targetList, 0, key)
-	result, err := kdb.Do(ctx, "LREM", targetList, 0, key).Result()
-	i_result := int(result.(int64))
-	fmt.Println("n removed:", i_result)
-	if err != nil {
-		fmt.Println("err:", err)
-		return key, 0
-	}
-	return key, i_result
-
 }
 
 func delGod(w http.ResponseWriter, r *http.Request) {
@@ -150,8 +70,7 @@ func delGod(w http.ResponseWriter, r *http.Request) {
 				fmt.Println(err)
 			}
 		}
-		//key, n_times := KDB_del_str(data.Val, "gods", keyDB)
-		_, n_times := KDB_del_str(data.Val, "gods", keyDB)
+		_, n_times := KDB.List_DelStr(data.Val, "gods", keyDB)
 		outputStr := fmt.Sprint(n_times)
 		w.Write([]byte(outputStr))
 
@@ -160,7 +79,6 @@ func delGod(w http.ResponseWriter, r *http.Request) {
 
 func postGod(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	//origin := req.Header.Get("Origin")
 	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -178,12 +96,11 @@ func postGod(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("request body:", string(body))
 
 		if body != nil {
-			//err := json.NewDecoder(body).Decode(&data)
 			err := json.Unmarshal(body, &data)
 			if err != nil {
 				fmt.Println(err)
 			}
-			result = KDB_add2list(keyDB, "gods", data.Val)
+			result = KDB.List_Add(keyDB, "gods", data.Val)
 		}
 		outputStr := fmt.Sprintf("%s %s", data.Val, result)
 		fmt.Println(outputStr)
@@ -268,7 +185,7 @@ func jsonWildtype2(w http.ResponseWriter, r *http.Request) {
 		listObj.Inputs = data
 		listName = listObj.Inputs.Val
 
-		strArr, byteArr = KDB_list2JSON_alpha(keyDB, listName)
+		strArr, byteArr = KDB.List2JSON_alpha(keyDB, listName)
 		listObj.List = strArr
 	}
 	//save the last list requested
@@ -313,7 +230,7 @@ func jsonWildtype(w http.ResponseWriter, r *http.Request) {
 		}
 		listObj.Inputs = data
 		listName = listObj.Inputs.Val
-		strArr, byteArr = KDB_list2JSON_alpha(keyDB, listObj.Inputs.Val)
+		strArr, byteArr = KDB.List2JSON_alpha(keyDB, listObj.Inputs.Val)
 		listObj.List = strArr
 	}
 	//save the last list requested
@@ -335,43 +252,8 @@ func jsonGods(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET")
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
-	input := KDB_list2JSON(keyDB, gods_key)
+	input := KDB.List2JSON(keyDB, gods_key)
 	w.Write(input)
-}
-
-func KDB_list2JSON(rdb *redis.Client, listKey string) []byte {
-	var output []byte
-	values, err := rdb.LRange(ctx, listKey, 0, -1).Result()
-	if err != nil {
-		fmt.Printf("Failed to read Redis list: %v \n", err)
-		return output
-	}
-
-	// Convert to JSON
-	jsonData, err := json.MarshalIndent(values, "", "  ")
-	if err != nil {
-		fmt.Printf("Failed to parse JSON: %v \n", err)
-		return output
-	}
-	return jsonData
-}
-
-func KDB_list2JSON_alpha(rdb *redis.Client, listKey string) ([]string, []byte) {
-	var output []byte
-	var strArr []string
-	values, err := rdb.LRange(ctx, listKey, 0, -1).Result()
-	if err != nil {
-		fmt.Printf("Failed to read Redis list: %v \n", err)
-		return strArr, output
-	}
-
-	// Convert to JSON
-	jsonData, err := json.MarshalIndent(values, "", "  ")
-	if err != nil {
-		fmt.Printf("Failed to parse JSON: %v \n", err)
-		return strArr, output
-	}
-	return values, jsonData
 }
 
 // simple post request --> /gods {"name":"Pazuzu"}
