@@ -1,8 +1,8 @@
-#H1 Tigre is a basic KeyDB endpoint API - **GET POST DELETE**
+# Tigre is a basic KeyDB endpoint API 	`#RRGGBB` - **GET POST DELETE**
 
 **More info on installing KeyDB here -- https://github.com/Snapchat/KeyDB**
 
-#H2 - KDB 
+## - KDB 
 - Connect to a KeyDB (*redis.Client) // *DB
 - List functionality:  
     Txt2List        -> convert a txt file into a KDB list
@@ -12,7 +12,7 @@
     List2JSON       -> Return list as JSON / LRANGE 0, -1 
     List2JSON_alpha -> Return list as JSON & []string
 
-#H2 - API client (main.go)
+## - API client (main.go)
 
 -- toy examples --
 "/jFruit" -  KDB.List2JSON(keyDB, fruit_key)
